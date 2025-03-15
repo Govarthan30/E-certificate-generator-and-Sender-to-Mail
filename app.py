@@ -1,142 +1,229 @@
-from flask import Flask, request, send_file, render_template_string, redirect, url_for
+from flask import Flask, request, send_file, render_template_string, jsonify
+from PyPDF2 import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
-from PyPDF2 import PdfReader, PdfWriter
-import io
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase import pdfmetrics
 import smtplib
-from email.message import EmailMessage
+import io
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 
 app = Flask(__name__)
 
-# Path to the certificate template
-TEMPLATE_PATH = "certificate_template.pdf"
-OUTPUT_PATH = "generated_certificate.pdf"
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
-EMAIL_ADDRESS = "noreplyotpgova@gmail.com"  # Replace with your email
-EMAIL_PASSWORD = "cvvjgllllyouffhw"  # Replace with your email password
+TEMPLATE_PATH = "certificate_template.pdf"  # Ensure this file exists
 
-def get_default_text_position_and_font(name, x, y, font_size, font_style):
-    """
-    Returns the user-defined X, Y position, font size, and font style for the participant's name.
-    """
-    return x, y, font_size, font_style
-
-HTML_FORM = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>E-Certificate Generator</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" 
-        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-</head>
-<body class="bg-gray-900 text-white flex items-center justify-center h-screen">
-    <div class="bg-gray-800 p-10 rounded-xl shadow-2xl">
-        <h2 class="text-2xl mb-4 font-bold text-center">E-Certificate Generator</h2>
-        <form method="post">
-            <div class="mb-3">
-                <label class="block text-sm font-medium">Participant's Name</label>
-                <input type="text" name="name" class="form-control" required>
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm font-medium">X Position</label>
-                <input type="number" name="x" class="form-control" required value="200">
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm font-medium">Y Position</label>
-                <input type="number" name="y" class="form-control" required value="300">
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm font-medium">Font Size</label>
-                <input type="number" name="font_size" class="form-control" required value="30">
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm font-medium">Font Style</label>
-                <select name="font_style" class="form-control">
-                    <option value="Helvetica-Bold">Helvetica-Bold</option>
-                    <option value="Times-Bold">Times-Bold</option>
-                    <option value="Courier-Bold">Courier-Bold</option>
-                </select>
-            </div>
-            <div class="mb-3">
-                <label class="block text-sm font-medium">Recipient Email</label>
-                <input type="email" name="email" class="form-control" required>
-            </div>
-            <button type="submit" class="btn btn-primary w-full">Generate & Send Certificate</button>
-        </form>
-    </div>
-    <script>
-        function showAlert() {
-            setTimeout(function() {
-                alert("Certificate Generated & Sent Successfully!");
-                window.location.href = "/";
-            }, 500);
-        }
-    </script>
-</body>
-</html>
-"""
-
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    if request.method == 'POST':
-        name = request.form['name']
-        x = int(request.form['x'])
-        y = int(request.form['y'])
-        font_size = int(request.form['font_size'])
-        font_style = request.form['font_style']
-        email = request.form['email']
-        
-        generate_certificate(name, x, y, font_size, font_style)
-        send_certificate(email)
-        return render_template_string(HTML_FORM + '<script>showAlert();</script>')
-    return render_template_string(HTML_FORM)
+# Register additional fonts
+pdfmetrics.registerFont(TTFont('Times-Roman', 'times.ttf'))
+pdfmetrics.registerFont(TTFont('Courier', 'cour.ttf'))
+pdfmetrics.registerFont(TTFont('Verdana', 'verdana.ttf'))
 
 def generate_certificate(name, x, y, font_size, font_style):
-    """
-    Generates a certificate with the participant's name at the specified position and font style.
-    """
-    reader = PdfReader(TEMPLATE_PATH)
-    writer = PdfWriter()
-    packet = io.BytesIO()
-    
-    pdf_canvas = canvas.Canvas(packet, pagesize=letter)
-    pdf_canvas.setFont(font_style, font_size)
-    pdf_canvas.drawString(x, y, name)
-    pdf_canvas.save()
-    packet.seek(0)
-    
-    new_pdf = PdfReader(packet)
-    page = reader.pages[0]
-    page.merge_page(new_pdf.pages[0])
-    writer.add_page(page)
-    
-    with open(OUTPUT_PATH, "wb") as output_pdf:
-        writer.write(output_pdf)
-
-def send_certificate(email):
-    """
-    Sends the generated certificate to the recipient's email.
-    """
+    """Generates a certificate and returns a PDF stream."""
     try:
-        msg = EmailMessage()
-        msg['Subject'] = "Your E-Certificate"
-        msg['From'] = EMAIL_ADDRESS
-        msg['To'] = email
-        msg.set_content("Dear Participant,\n\nAttached is your e-certificate.\n\nBest Regards,\nEvent Team")
-        
-        with open(OUTPUT_PATH, "rb") as f:
-            msg.add_attachment(f.read(), maintype='application', subtype='pdf', filename=OUTPUT_PATH)
-        
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-            server.send_message(msg)
-        
-        print("Email sent successfully to", email)
-    except Exception as e:
-        print("Error sending email:", e)
+        reader = PdfReader(TEMPLATE_PATH)
+        writer = PdfWriter()
+        packet = io.BytesIO()
 
-if __name__ == '__main__':
+        pdf_canvas = canvas.Canvas(packet, pagesize=letter)
+        pdf_canvas.setFont(font_style, font_size)
+        pdf_canvas.drawString(int(x), int(y), name)
+        pdf_canvas.save()
+
+        packet.seek(0)
+        overlay = PdfReader(packet).pages[0]
+        base_page = reader.pages[0]
+        base_page.merge_page(overlay)
+        writer.add_page(base_page)
+
+        output_stream = io.BytesIO()
+        writer.write(output_stream)
+        output_stream.seek(0)
+
+        return output_stream
+    except FileNotFoundError:
+        return None
+
+def send_email(receiver_email, pdf_stream):
+    """Send the generated certificate via email."""
+    sender_email = "noreplyotpgova@gmail.com"  # Change this
+    sender_password = "cvvjgllllyouffhw"  # Change this (use app password if needed)
+
+    msg = MIMEMultipart()
+    msg["From"] = sender_email
+    msg["To"] = receiver_email
+    msg["Subject"] = "Your Certificate"
+
+    part = MIMEBase("application", "octet-stream")
+    part.set_payload(pdf_stream.getvalue())
+    encoders.encode_base64(part)
+    part.add_header("Content-Disposition", "attachment; filename=certificate.pdf")
+    msg.attach(part)
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, receiver_email, msg.as_string())
+        return True
+    except Exception as e:
+        print("Email Error:", e)
+        return False
+
+@app.route("/")
+def index():
+    html = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Live Certificate Preview</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                background-color: #121212;
+                color: #fff;
+                margin: 0;
+                padding: 20px;
+            }
+            .container {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 20px;
+            }
+            .preview-container {
+                width: 60%;
+                height: 80vh;
+                border: 1px solid #ccc;
+                background-color: #222;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+            }
+            iframe {
+                width: 100%;
+                height: 100%;
+                border: none;
+                background-color: white;
+            }
+            .input-container {
+                width: 35%;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                background: #333;
+                padding: 20px;
+                border-radius: 8px;
+            }
+            label {
+                font-weight: bold;
+                margin-top: 10px;
+            }
+            input, select {
+                padding: 10px;
+                font-size: 16px;
+                width: 100%;
+                border: none;
+                border-radius: 5px;
+                background: #444;
+                color: #fff;
+            }
+            input:focus, select:focus {
+                outline: 2px solid #1db954;
+            }
+            button {
+                background: #1db954;
+                color: white;
+                padding: 10px;
+                border: none;
+                border-radius: 5px;
+                font-size: 16px;
+                cursor: pointer;
+            }
+            button:hover {
+                background: #17a844;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Live Certificate Generator</h1>
+        <div class="container">
+            <div class="preview-container">
+                <iframe id="preview-frame"></iframe>
+            </div>
+            <div class="input-container">
+                <label>Name:</label>
+                <input type="text" id="name" placeholder="Enter Name">
+
+                <label>X Position:</label>
+                <input type="number" id="x" placeholder="200">
+
+                <label>Y Position:</label>
+                <input type="number" id="y" placeholder="300">
+
+                <label>Font Size:</label>
+                <input type="number" id="font_size" placeholder="30">
+
+                <label>Font Style:</label>
+                <select id="font_style">
+                    <option value="Helvetica-Bold">Bold</option>
+                    <option value="Helvetica">Regular</option>
+                    <option value="Times-Roman">Times New Roman</option>
+                    <option value="Courier">Courier</option>
+                    <option value="Verdana">Verdana</option>
+                </select>
+
+                <label>Email:</label>
+                <input type="email" id="email" placeholder="Enter recipient email">
+
+                <button onclick="sendCertificate()">Send Certificate</button>
+                <button id="download-button">Download Certificate</button>
+            </div>
+        </div>
+
+        <script>
+            function updatePreview() {
+                let name = document.getElementById("name").value || "Sample Name";
+                let x = document.getElementById("x").value || 200;
+                let y = document.getElementById("y").value || 300;
+                let fontSize = document.getElementById("font_size").value || 30;
+                let fontStyle = document.getElementById("font_style").value || "Helvetica-Bold";
+
+                let url = `/preview?name=${encodeURIComponent(name)}&x=${x}&y=${y}&font_size=${fontSize}&font_style=${fontStyle}`;
+                document.getElementById("preview-frame").src = url;
+                document.getElementById("download-button").onclick = () => window.open(url, "_blank");
+            }
+
+            function sendCertificate() {
+                let name = document.getElementById("name").value;
+                let email = document.getElementById("email").value;
+                if (!email) {
+                    alert("Please enter an email!");
+                    return;
+                }
+                fetch(`/send_certificate?name=${encodeURIComponent(name)}&email=${email}`)
+                    .then(response => response.text())
+                    .then(data => alert(data));
+            }
+
+            document.querySelectorAll("input, select").forEach(input => input.addEventListener("input", updatePreview));
+            updatePreview();
+        </script>
+    </body>
+    </html>
+    """
+    return render_template_string(html)
+
+@app.route("/preview")
+def preview_certificate():
+    pdf_stream = generate_certificate(request.args.get("name", "Sample Name"), int(request.args.get("x", 200)), int(request.args.get("y", 300)), float(request.args.get("font_size", 30)), request.args.get("font_style", "Helvetica-Bold"))
+    return send_file(pdf_stream, mimetype="application/pdf") if pdf_stream else ("Template not found!", 404)
+
+@app.route("/send_certificate")
+def send_certificate():
+    return jsonify({"message": "Certificate sent successfully!"} if send_email(request.args.get("email"), generate_certificate(request.args.get("name", "Sample Name"), 200, 300, 30, "Helvetica-Bold")) else {"error": "Failed to send email!"})
+
+if __name__ == "__main__":
     app.run(debug=True)
